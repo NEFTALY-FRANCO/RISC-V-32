@@ -67,13 +67,38 @@ def manager(nombre, rd, rs1, rs2):
     bit_line = ""
 
     if tipo == "R":
-        bit_line = assambler_R(rd, rs1, rs2, opcode, funct3, funct7)
+        bit_line = assambler_R(funct7, rs2, rs1, funct3, rd, opcode)
         print(bit_line)
-    return bit_line
+        return bit_line
+    elif tipo == "I":
+        if opcode == "1110111":
+            if nombre == "ecall":
+                imm = "000000000000"
+                rs1 = "00000"
+                rd = "00000"
+                return bit_line = imm + format(rs1, "05b") + funct3 + format(rd, "05b") + opcode
+            else:
+                imm = "000000000001"
+                rs1 = "00000"
+                rd = "00000"
+                return bit_line = imm + format(rs1, "05b") + funct3 + format(rd, "05b") + opcode
+    else:
+        bit_line = assambler_I(rs2, rs1, funct3, rd, opcode, funct7)
 
-def assambler_R(rd, rs1, rs2, opcode, funct3, funct7):
+
+
+def assambler_R(funct7, rs2, rs1, funct3, rd, opcode):
+    return funct7 + format(rs2, "05b") + format(rs1, "05b") + funct3 + format(rd, "05b")  + opcode
+
+def assambler_I(rs2, rs1, funct3, rd, opcode, funct7 = None):
     
-    return funct7 + bin(rs2)[2:] + bin(rs1)[2:] + funct3 + bin(rd)[2:] + opcode
+    if funct7 is None:
+        imm = format(rs2, "012b")
+        return imm + format(rs1, "05b") + funct3 + format(rd, "05b") + opcode
+    else:
+        imm = funct7 + format(rs2, "05b")
+        return imm + format(rs1, "05b") + funct3 + format(rd, "05b") + opcode
+
 
 
 
