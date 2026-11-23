@@ -1,5 +1,41 @@
 import sys
 
+PSEUDO_INST = {
+    "nop":  ("None", "addi", "zero", "zero", None, 0),
+    "ret":  ("None", "jalr", "zero", "ra", None, 0),
+    "mv":   ("rd,rs", "addi", None, None, None, 0),
+    "not":  ("rd,rs", "xori", None, None, None, -1),
+    "neg":  ("rd,rs", "sub", None, "zero", None, None),
+    "seqz": ("rd,rs", "sltiu", None, None, None, 1),
+    "snez": ("rd,rs", "sltu", None, "zero", None, None),
+    "sltz": ("rd,rs", "slt", None, None, "zero", None),
+    "sgtz": ("rd,rs", "slt", None, "zero", None, None),
+    "beqz": ("rs,L", "beq", None, "zero", None, None),
+    "bnez": ("rs,L", "bne", None, "zero", None, None),
+    "blez": ("rs,L", "bge", "zero", None, None, None),
+    "bgez": ("rs,L", "bge", None, "zero", None, None),
+    "bltz": ("rs,L", "blt", None, "zero", None, None),
+    "bgtz": ("rs,L", "blt", "zero", None, None, None),
+    "bgt":  ("rs,rt,L", "blt", None, None, None, None),
+    "ble":  ("rs,rt,L", "bge", None, None, None, None),
+    "bgtu": ("rs,rt,L", "bltu", None, None, None, None),
+    "bleu": ("rs,rt,L", "bgeu", None, None, None, None),
+    "j":    ("L", "jal", "zero", None, None, None),
+    "jal":  ("L", "jal", "ra", None, None, None),
+    "call": ("L", "call", None, None, None, None),
+    "tail": ("L", "tail", None, None, None, None),
+    "jr":   ("rs", "jalr", "zero", None, None, 0),
+    "jalr": ("rs", "jalr", "ra", None, None, 0),
+    "li":   ("rd,imm", "li", None, None, None, None),
+    "la":   ("rd,S", "la", None, None, None, None),
+    "lb":   ("rd,S", "lb", None, None, None, None),
+    "lh":   ("rd,S", "lh", None, None, None, None),
+    "lw":   ("rd,S", "lw", None, None, None, None),
+    "sb":   ("rs,S,rt", "sb", None, None, None, None),
+    "sh":   ("rs,S,rt", "sh", None, None, None, None),
+    "sw":   ("rs,S,rt", "sw", None, None, None, None),
+}
+
 REGISTROS = {
     "x0": "00000",
     "x1": "00001",
@@ -124,7 +160,6 @@ def manager_ARCH(entrada):
 
     etiquetas = {}
 
-    # PASADA 1: guardar donde esta cada etiqueta
     PC = 0
 
     with open(entrada, "r") as archivo:
@@ -149,11 +184,8 @@ def manager_ARCH(entrada):
 
             PC += 4
 
-    # PASADA 2: convertir cada instruccion
     PC = 0
 
-    # el archivo de salida se llama igual que la entrada pero con .hex
-    # (se quita la extension solo si el archivo tiene una)
     nombre_hex = entrada
     ultimo = entrada.split("/")[-1].split("\\")[-1]   # nombre sin carpetas
 
@@ -184,95 +216,107 @@ def manager_ARCH(entrada):
             partes = linea.replace(",", " ").split()
 
             nombre = partes[0]
+            bandera = False
 
-            if nombre not in INST:
+            if nombre not in INST and nombre not in PSEUDO_INST:
                 print("Instrucción inválida:", nombre)
                 archivo_hex.close()
                 return
-
             tipo = INST[nombre][0]
+            if tipo == "I" or tipo = "S":
+                part3 = tipo[3]
+            if "(" in part3:
+                bandera= True
 
-            if tipo == "R":
+            if nombre in INST and bandera is False:
+                tipo = INST[nombre][0]
 
-                bits = manager(nombre, partes[1], partes[2], partes[3])
+              if tipo == "R":
 
-            elif tipo == "I":
+                  bits = manager(nombre, partes[1], partes[2], partes[3])
 
-                if nombre == "ecall" or nombre == "ebreak":
+              elif tipo == "I":
 
-                    bits = manager(nombre)
+                  if nombre == "ecall" or nombre == "ebreak":
 
-                elif nombre in ["lb", "lh", "lw", "lbu", "lhu", "jalr"]:
+                      bits = manager(nombre)
 
-                    # lw x5, 8(sp)
-                    rd = partes[1]
+                  elif nombre in ["lb", "lh", "lw", "lbu", "lhu", "jalr"]:
 
-                    operando = partes[2]
+                      # lw x5, 8(sp)
+                      rd = partes[1]
 
-                    if "(" in operando:
+                      operando = partes[2]
 
-                        imm = operando.split("(")[0]
+                      if "(" in operando:
 
-                        rs1 = operando.split("(")[1].replace(")", "")
+                          imm = operando.split("(")[0]
 
-                    else:
+                          rs1 = operando.split("(")[1].replace(")", "")
 
-                        imm = "0"
-                        rs1 = operando
+                      else:
 
-                    if imm == "":
-                        imm = "0"
+                          imm = "0"
+                          rs1 = operando
 
-                    bits = manager(nombre, rd, rs1, None, int(imm, 0))
+                      if imm == "":
+                          imm = "0"
 
-                else:
+                      bits = manager(nombre, rd, rs1, None, int(imm, 0))
 
-                    bits = manager(nombre, partes[1], partes[2], None, int(partes[3], 0))
+                  else:
 
-            elif tipo == "S":
+                      bits = manager(nombre, partes[1], partes[2], None, int(partes[3], 0))
 
-                # sw x5, 8(sp)
-                rs2 = partes[1]
+              elif tipo == "S":
 
-                operando = partes[2]
+                  # sw x5, 8(sp)
+                  rs2 = partes[1]
 
-                imm = operando.split("(")[0]
+                  operando = partes[2]
 
-                rs1 = operando.split("(")[1].replace(")", "")
+                  imm = operando.split("(")[0]
 
-                if imm == "":
-                    imm = "0"
+                  rs1 = operando.split("(")[1].replace(")", "")
 
-                bits = manager(nombre, None, rs1, rs2, int(imm, 0))
+                  if imm == "":
+                      imm = "0"
 
-            elif tipo == "B":
+                  bits = manager(nombre, None, rs1, rs2, int(imm, 0))
 
-                rs1 = partes[1]
-                rs2 = partes[2]
-                destino = partes[3]
+              elif tipo == "B":
 
-                if destino in etiquetas:
+                  rs1 = partes[1]
+                  rs2 = partes[2]
+                  destino = partes[3]
+  
+                  if destino in etiquetas:
+                      offset = etiquetas[destino] - PC
+                  else:
+                      offset = int(destino, 0)
+
+                  bits = manager(nombre, None, rs1, rs2, offset)
+
+              elif tipo == "U":
+
+                  bits = manager(nombre, partes[1], None, None, int(partes[2], 0))
+
+              elif tipo == "J":
+
+                  rd = partes[1]
+                  destino = partes[2]
+
+                  if destino in etiquetas:
                     offset = etiquetas[destino] - PC
-                else:
-                    offset = int(destino, 0)
+                  else:
+                      offset = int(destino, 0)
 
-                bits = manager(nombre, None, rs1, rs2, offset)
+                  bits = manager(nombre, rd, None, None, offset)
 
-            elif tipo == "U":
-
-                bits = manager(nombre, partes[1], None, None, int(partes[2], 0))
-
-            elif tipo == "J":
-
-                rd = partes[1]
-                destino = partes[2]
-
-                if destino in etiquetas:
-                    offset = etiquetas[destino] - PC
-                else:
-                    offset = int(destino, 0)
-
-                bits = manager(nombre, rd, None, None, offset)
+              elif nombre in PSEUDO_INST:
+                inst = PSEUDO_INST[nombre]
+                tipo = inst[0]
+                if
 
             # si hubo error en manager, no sigue
             if bits == "":
