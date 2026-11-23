@@ -1,41 +1,5 @@
 import sys
 
-PSEUDO_INST = {
-    "nop":  ("None", "addi", "zero", "zero", None, 0),
-    "ret":  ("None", "jalr", "zero", "ra", None, 0),
-    "mv":   ("rd,rs", "addi", None, None, None, 0),
-    "not":  ("rd,rs", "xori", None, None, None, -1),
-    "neg":  ("rd,rs", "sub", None, "zero", None, None),
-    "seqz": ("rd,rs", "sltiu", None, None, None, 1),
-    "snez": ("rd,rs", "sltu", None, "zero", None, None),
-    "sltz": ("rd,rs", "slt", None, None, "zero", None),
-    "sgtz": ("rd,rs", "slt", None, "zero", None, None),
-    "beqz": ("rs,L", "beq", None, "zero", None, None),
-    "bnez": ("rs,L", "bne", None, "zero", None, None),
-    "blez": ("rs,L", "bge", "zero", None, None, None),
-    "bgez": ("rs,L", "bge", None, "zero", None, None),
-    "bltz": ("rs,L", "blt", None, "zero", None, None),
-    "bgtz": ("rs,L", "blt", "zero", None, None, None),
-    "bgt":  ("rs,rt,L", "blt", None, None, None, None),
-    "ble":  ("rs,rt,L", "bge", None, None, None, None),
-    "bgtu": ("rs,rt,L", "bltu", None, None, None, None),
-    "bleu": ("rs,rt,L", "bgeu", None, None, None, None),
-    "j":    ("L", "jal", "zero", None, None, None),
-    "jal":  ("L", "jal", "ra", None, None, None),
-    "call": ("L", "call", None, None, None, None),
-    "tail": ("L", "tail", None, None, None, None),
-    "jr":   ("rs", "jalr", "zero", None, None, 0),
-    "jalr": ("rs", "jalr", "ra", None, None, 0),
-    "li":   ("rd,imm", "li", None, None, None, None),
-    "la":   ("rd,S", "la", None, None, None, None),
-    "lb":   ("rd,S", "lb", None, None, None, None),
-    "lh":   ("rd,S", "lh", None, None, None, None),
-    "lw":   ("rd,S", "lw", None, None, None, None),
-    "sb":   ("rs,S,rt", "sb", None, None, None, None),
-    "sh":   ("rs,S,rt", "sh", None, None, None, None),
-    "sw":   ("rs,S,rt", "sw", None, None, None, None),
-}
-
 REGISTROS = {
     "x0": "00000",
     "x1": "00001",
@@ -156,12 +120,104 @@ INST = {
 }
 
 
+def hi_lo(valor):
+    # parte un numero en 20 bits altos y 12 bits bajos (con signo)
+    lo = ((valor & 0xFFF) ^ 0x800) - 0x800
+    hi = ((valor - lo) >> 12) & 0xFFFFF
+    return hi, lo
+
+
+def distancia(destino, PC, etiquetas):
+    # distancia en bytes desde PC hasta la etiqueta
+    if destino in etiquetas:
+        return etiquetas[destino] - PC
+    try:
+        return int(destino, 0)
+    except ValueError:
+        return 0        # primera pasada: la etiqueta aun no se conoce
+
+
+def pseudo_simple(partes):
+    """Pseudo que se convierte en UNA sola instruccion real."""
+    n = partes[0]
+    a = partes[1:]          # operandos que escribio el usuario
+
+    if n == "nop":  return ["addi", "zero", "zero", "0"]
+    if n == "ret":  return ["jalr", "zero", "ra", "0"]
+    if n == "mv":   return ["addi", a[0], a[1], "0"]
+    if n == "not":  return ["xori", a[0], a[1], "-1"]
+    if n == "neg":  return ["sub", a[0], "zero", a[1]]
+    if n == "seqz": return ["sltiu", a[0], a[1], "1"]
+    if n == "snez": return ["sltu", a[0], "zero", a[1]]
+    if n == "sltz": return ["slt", a[0], a[1], "zero"]
+    if n == "sgtz": return ["slt", a[0], "zero", a[1]]
+
+    if n == "beqz": return ["beq", a[0], "zero", a[1]]
+    if n == "bnez": return ["bne", a[0], "zero", a[1]]
+    if n == "blez": return ["bge", "zero", a[0], a[1]]
+    if n == "bgez": return ["bge", a[0], "zero", a[1]]
+    if n == "bltz": return ["blt", a[0], "zero", a[1]]
+    if n == "bgtz": return ["blt", "zero", a[0], a[1]]
+
+    if n == "bgt":  return ["blt",  a[1], a[0], a[2]]
+    if n == "ble":  return ["bge",  a[1], a[0], a[2]]
+    if n == "bgtu": return ["bltu", a[1], a[0], a[2]]
+    if n == "bleu": return ["bgeu", a[1], a[0], a[2]]
+
+    if n == "j":    return ["jal", "zero", a[0]]
+    if n == "jal":  return ["jal", "ra", a[0]]
+    if n == "jr":   return ["jalr", "zero", a[0], "0"]
+    if n == "jalr": return ["jalr", "ra", a[0], "0"]
+
+    return None             # no es una pseudo conocida
+
+
+def pseudo_a_real(partes, PC, etiquetas):
+    """Devuelve una LISTA con las instrucciones reales de la pseudo
+    (1 instruccion, o 2 en li grande, la, call y tail)."""
+    n = partes[0]
+    a = partes[1:]
+
+    # li rd, numero
+    if n == "li":
+        v = int(a[1], 0)
+        if -2048 <= v < 2048:                       # cabe en 12 bits
+            return [["addi", a[0], "zero", str(v)]]
+        hi, lo = hi_lo(v)                           # no cabe: lui + addi
+        return [["lui", a[0], str(hi)], ["addi", a[0], a[0], str(lo)]]
+
+    # la rd, etiqueta
+    if n == "la":
+        hi, lo = hi_lo(distancia(a[1], PC, etiquetas))
+        return [["auipc", a[0], str(hi)], ["addi", a[0], a[0], str(lo)]]
+
+    # call etiqueta -> auipc ra + jalr ra      (guarda el retorno en ra)
+    # tail etiqueta -> auipc t1 + jalr zero    (salta sin guardar retorno)
+    if n in ("call", "tail"):
+        hi, lo = hi_lo(distancia(a[0], PC, etiquetas))
+        if n == "call":
+            return [["auipc", "ra", str(hi)], ["jalr", "ra", str(lo) + "(ra)"]]
+        return [["auipc", "t1", str(hi)], ["jalr", "zero", str(lo) + "(t1)"]]
+
+    # el resto: una sola instruccion
+    real = pseudo_simple(partes)
+    if real is None:
+        return None
+    return [real]
+
+
+def es_pseudo(partes):
+    # jal/jalr con un solo operando tambien son pseudo
+    return partes[0] not in INST or (partes[0] in ("jal", "jalr") and len(partes) == 2)
+
+
 def manager_ARCH(entrada):
 
     etiquetas = {}
 
     PC = 0
 
+    # ---------- primera pasada: guardar etiquetas ----------
     with open(entrada, "r") as archivo:
 
         for linea in archivo:
@@ -182,7 +238,18 @@ def manager_ARCH(entrada):
                 if linea == "":
                     continue
 
-            PC += 4
+            partes = linea.replace(",", " ").split()
+
+            # cuantas instrucciones reales ocupa esta linea (1 o 2)
+            try:
+                if es_pseudo(partes):
+                    reales = pseudo_a_real(partes, PC, etiquetas)
+                    PC += 4 * len(reales) if reales else 4
+                else:
+                    PC += 4
+            except (ValueError, IndexError) as e:
+                print("Error en:", linea, "->", e)
+                return
 
     PC = 0
 
@@ -195,6 +262,7 @@ def manager_ARCH(entrada):
     nombre_hex = nombre_hex + ".hex"
     archivo_hex = open(nombre_hex, "w")
 
+    # ---------- segunda pasada: codificar ----------
     with open(entrada, "r") as archivo:
 
         for linea in archivo:
@@ -215,119 +283,120 @@ def manager_ARCH(entrada):
 
             partes = linea.replace(",", " ").split()
 
-            nombre = partes[0]
-            bandera = False
+            try:
 
-            if nombre not in INST and nombre not in PSEUDO_INST:
-                print("Instrucción inválida:", nombre)
+                # si es pseudo se reemplaza por sus instrucciones reales
+                if es_pseudo(partes):
+                    reales = pseudo_a_real(partes, PC, etiquetas)
+                    if reales is None:
+                        print("Instrucción inválida:", partes[0])
+                        archivo_hex.close()
+                        return
+                else:
+                    reales = [partes]
+
+                for partes in reales:
+
+                    nombre = partes[0]
+                    tipo = INST[nombre][0]
+
+                    if tipo == "R":
+
+                        bits = manager(nombre, partes[1], partes[2], partes[3])
+
+                    elif tipo == "I":
+
+                        if nombre == "ecall" or nombre == "ebreak":
+
+                            bits = manager(nombre)
+
+                        elif nombre in ["lb", "lh", "lw", "lbu", "lhu"] or (nombre == "jalr" and len(partes) == 3):
+
+                            # lw x5, 8(sp)
+                            rd = partes[1]
+
+                            operando = partes[2]
+
+                            if "(" in operando:
+
+                                imm = operando.split("(")[0]
+
+                                rs1 = operando.split("(")[1].replace(")", "")
+
+                            else:
+
+                                imm = "0"
+                                rs1 = operando
+
+                            if imm == "":
+                                imm = "0"
+
+                            bits = manager(nombre, rd, rs1, None, int(imm, 0))
+
+                        else:
+
+                            bits = manager(nombre, partes[1], partes[2], None, int(partes[3], 0))
+
+                    elif tipo == "S":
+
+                        # sw x5, 8(sp)
+                        rs2 = partes[1]
+
+                        operando = partes[2]
+
+                        imm = operando.split("(")[0]
+
+                        rs1 = operando.split("(")[1].replace(")", "")
+
+                        if imm == "":
+                            imm = "0"
+
+                        bits = manager(nombre, None, rs1, rs2, int(imm, 0))
+
+                    elif tipo == "B":
+
+                        rs1 = partes[1]
+                        rs2 = partes[2]
+                        destino = partes[3]
+
+                        if destino in etiquetas:
+                            offset = etiquetas[destino] - PC
+                        else:
+                            offset = int(destino, 0)
+
+                        bits = manager(nombre, None, rs1, rs2, offset)
+
+                    elif tipo == "U":
+
+                        bits = manager(nombre, partes[1], None, None, int(partes[2], 0))
+
+                    elif tipo == "J":
+
+                        rd = partes[1]
+                        destino = partes[2]
+
+                        if destino in etiquetas:
+                            offset = etiquetas[destino] - PC
+                        else:
+                            offset = int(destino, 0)
+
+                        bits = manager(nombre, rd, None, None, offset)
+
+                    # si hubo error en manager, no sigue
+                    if bits == "":
+                        archivo_hex.close()
+                        return
+
+                    # pasar los 32 bits a hexadecimal (8 digitos) y escribirlos
+                    hexa = format(int(bits, 2), "08x")
+                    archivo_hex.write(hexa + "\n")
+
+                    PC += 4
+
+            except (ValueError, IndexError) as e:
+                print("Error en:", linea, "->", e)
                 archivo_hex.close()
                 return
-            tipo = INST[nombre][0]
-            if tipo == "I" or tipo = "S":
-                part3 = tipo[3]
-            if "(" in part3:
-                bandera= True
-
-            if nombre in INST and bandera is False:
-                tipo = INST[nombre][0]
-
-              if tipo == "R":
-
-                  bits = manager(nombre, partes[1], partes[2], partes[3])
-
-              elif tipo == "I":
-
-                  if nombre == "ecall" or nombre == "ebreak":
-
-                      bits = manager(nombre)
-
-                  elif nombre in ["lb", "lh", "lw", "lbu", "lhu", "jalr"]:
-
-                      # lw x5, 8(sp)
-                      rd = partes[1]
-
-                      operando = partes[2]
-
-                      if "(" in operando:
-
-                          imm = operando.split("(")[0]
-
-                          rs1 = operando.split("(")[1].replace(")", "")
-
-                      else:
-
-                          imm = "0"
-                          rs1 = operando
-
-                      if imm == "":
-                          imm = "0"
-
-                      bits = manager(nombre, rd, rs1, None, int(imm, 0))
-
-                  else:
-
-                      bits = manager(nombre, partes[1], partes[2], None, int(partes[3], 0))
-
-              elif tipo == "S":
-
-                  # sw x5, 8(sp)
-                  rs2 = partes[1]
-
-                  operando = partes[2]
-
-                  imm = operando.split("(")[0]
-
-                  rs1 = operando.split("(")[1].replace(")", "")
-
-                  if imm == "":
-                      imm = "0"
-
-                  bits = manager(nombre, None, rs1, rs2, int(imm, 0))
-
-              elif tipo == "B":
-
-                  rs1 = partes[1]
-                  rs2 = partes[2]
-                  destino = partes[3]
-  
-                  if destino in etiquetas:
-                      offset = etiquetas[destino] - PC
-                  else:
-                      offset = int(destino, 0)
-
-                  bits = manager(nombre, None, rs1, rs2, offset)
-
-              elif tipo == "U":
-
-                  bits = manager(nombre, partes[1], None, None, int(partes[2], 0))
-
-              elif tipo == "J":
-
-                  rd = partes[1]
-                  destino = partes[2]
-
-                  if destino in etiquetas:
-                    offset = etiquetas[destino] - PC
-                  else:
-                      offset = int(destino, 0)
-
-                  bits = manager(nombre, rd, None, None, offset)
-
-              elif nombre in PSEUDO_INST:
-                inst = PSEUDO_INST[nombre]
-                tipo = inst[0]
-                if
-
-            # si hubo error en manager, no sigue
-            if bits == "":
-                archivo_hex.close()
-                return
-
-            # pasar los 32 bits a hexadecimal (8 digitos) y escribirlos
-            hexa = format(int(bits, 2), "08x")
-            archivo_hex.write(hexa + "\n")
-
-            PC += 4
 
     archivo_hex.close()
     print("Archivo creado:", nombre_hex)
@@ -383,7 +452,6 @@ def manager(nombre, rd=None, rs1=None, rs2=None, imm=None):
     elif tipo == "J":
         bit_line = assembler_J(imm, REGISTROS[rd], opcode)
 
-    print(bit_line)
     return bit_line
 
 
@@ -429,4 +497,6 @@ def assembler_J(imm, rd, opcode):
     imm10_1 = imm[10:20]
     return imm20 + imm10_1 + imm11 + imm19_12 + rd + opcode
 
-manager_ARCH(sys.argv[1])
+
+if __name__ == "__main__":
+    manager_ARCH(sys.argv[1])
